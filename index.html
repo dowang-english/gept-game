@@ -107,6 +107,7 @@ button.go:hover{background:#ff5230}
     <button data-m="spell">🗡 Lv3 看中文默寫</button>
     <button data-m="sent">📜 Lv4 例句填空（句中填單字）</button>
     <button data-m="coll">🔗 Lv5 搭配詞填空（補上搭配的單字）</button>
+    <button data-m="drill">🔥 Lv6 錯題強化（只練錯題本：看中文默寫 ➜ 例句填空，連過 2 關才畢業）</button>
    </div>
    <h2>② 選擇範圍</h2>
    <div class="row">
@@ -130,7 +131,7 @@ button.go:hover{background:#ff5230}
  </div>
 
  <div id="quiz" class="hidden">
-  <div class="hud"><span>第 <b id="qi">1</b> / <b id="qn">20</b> 題</span><span>連對 <b id="streak">0</b>　本回 <span class="ball"></span> <b id="gain">0</b></span></div>
+  <div class="hud"><span>第 <b id="qi">1</b> / <b id="qn">20</b> 題</span><span id="dtag" class="hidden" style="background:#ffcb05;color:#222;padding:0 10px;border:2px solid #222;border-radius:12px"></span><span>連對 <b id="streak">0</b>　本回 <span class="ball"></span> <b id="gain">0</b></span></div>
   <div class="bar"><i id="bar"></i></div>
   <div class="panel">
    <div class="q" id="qText"></div>
@@ -245,8 +246,8 @@ function init(){
 }
 init();
 // ---- menu ----
-let mode='syl';
-$$('#modeRow button').forEach(b=>b.onclick=()=>{mode=b.dataset.m;$$('#modeRow button').forEach(x=>x.classList.toggle('sel',x===b))});
+let mode='syl',sel='syl';
+$$('#modeRow button').forEach(b=>b.onclick=()=>{mode=sel=b.dataset.m;$$('#modeRow button').forEach(x=>x.classList.toggle('sel',x===b))});
 $$('.mBack').forEach(b=>b.onclick=()=>{init();show('menu')});
 $('#resMenu').onclick=()=>{init();show('menu')};
 $('#quit').onclick=()=>{speechSynthesis&&speechSynthesis.cancel();init();show('menu')};
@@ -348,7 +349,7 @@ function sentence(w){
  return k?SENT[k]:'Please write the word: ___ .';
 }
 function pool(){
- let p=$('#src').value==='mist'?Object.values(mist):WORDS;
+ let p=(sel==='drill'||$('#src').value==='mist')?Object.values(mist):WORDS;
  const L=$('#rngLetter').value; if(L)p=p.filter(x=>x.w[0].toUpperCase()===L);
  p=uniq(p);
  if(mode==='syl')p=p.filter(x=>isAlpha(x.w)&&syl(x.w).length>=2);
@@ -357,18 +358,37 @@ function pool(){
  return p;
 }
 // ---- quiz ----
+let curSent=null;
+// 專屬例句：取自該字的搭配詞資料（collX），句中必須含有該單字原形；沒有才退回通用句型
+function sentFor(w){
+ const re=new RegExp('\\b'+w.w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','gi');
+ const c=shuffle(collX(w.w).filter(c=>c[2]&&new RegExp(re.source,'i').test(c[2])))[0];
+ return c?{en:c[2],zh:c[3]||'',blank:c[2].replace(re,'_____')}:null;
+}
 let curBlank=null,Q=[],qi=0,gain=0,streak=0,right=0,wrong=[],answered=false;
+// ---- Lv6 錯題強化 ----
+let prog={},tries={},mastered=0;
+const dkey=w=>w.w.toLowerCase();
+function drillFmt(w){
+ return (prog[dkey(w)]||0)>=1?'sent':'spell';
+}
 function start(){
+ mode=sel;
  const p=pool();
+ if(sel==='drill'&&!p.length){alert('錯題本是空的（或這個開頭字母沒有錯題）。先玩其他等級，答錯的字會自動進錯題本。');return}
  if(p.length<4&&mode.startsWith('choice')){alert('這個範圍的單字太少（需至少 4 個）。');return}
  if(!p.length){alert('這個範圍沒有單字，請換一個範圍。');return}
  Q=shuffle(p).slice(0,+$('#qCount').value);qi=0;gain=0;streak=0;right=0;wrong=[];
+ if(sel==='drill'){Q=Q.map(x=>({w:x.w,pos:x.pos,zh:x.zh}));prog={};tries={};mastered=0}
  $('#qn').textContent=Q.length;show('quiz');ask();
 }
 $('#start').onclick=start;$('#again').onclick=start;
 function sameZh(a){return WORDS.filter(x=>x.zh===a.zh).map(x=>x.w.toLowerCase())}
 function ask(){
  answered=false;const w=Q[qi];
+ const dt=$('#dtag');
+ if(sel==='drill'){mode=drillFmt(w);dt.classList.remove('hidden');dt.textContent='🔥 第 '+((prog[dkey(w)]||0)+1)+'／2 關';$('#qn').textContent=Q.length}
+ else dt.classList.add('hidden');
  $('#qi').textContent=qi+1;$('#streak').textContent=streak;$('#gain').textContent=gain;
  $('#bar').style.width=(qi/Q.length*100)+'%';
  $('#fb').textContent='';$('#fb').className='fb';$('#next').classList.add('hidden');$('#cam').classList.add('hidden');$('#collBox').classList.add('hidden');
@@ -420,7 +440,8 @@ function ask(){
   if(mode==='spell'){$('#qText').innerHTML=esc(w.zh)+'<small>'+esc(w.pos)+'　共 '+w.w.length+' 個字母</small>'}
   else if(mode==='coll'){const ph=shuffle(collOf(w.w))[0];const re=new RegExp('\\b'+w.w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','i');curBlank={ph,re};
    $('#qText').innerHTML='<span style="font-size:26px">'+esc(ph.replace(re,'_____'))+'</span><small>搭配詞　提示：'+esc(w.zh)+'（'+esc(w.pos)+'，'+w.w.length+' 個字母）</small>'}
-  else if(mode==='sent'){$('#qText').innerHTML='<span style="font-size:24px">'+esc(sentence(w))+'</span><small>提示：'+esc(w.zh)+'（'+esc(w.pos)+'，'+w.w.length+' 個字母）</small>'}
+  else if(mode==='sent'){curSent=sentFor(w);
+   $('#qText').innerHTML='<span style="font-size:24px">'+esc(curSent?curSent.blank:sentence(w))+'</span><small>'+(curSent&&curSent.zh?'句意：'+esc(curSent.zh)+'<br>':'')+'提示：'+esc(w.zh)+'（'+esc(w.pos)+'，'+w.w.length+' 個字母）</small>'}
   else{$('#qText').innerHTML='🔊 請聽發音，拼出單字<small id="dh">'+w.w.length+' 個字母</small>';speak(w.w)}
   const a=$('#ans');a.value='';a.disabled=false;a.focus();$('#submit').disabled=false;
  }
@@ -460,6 +481,15 @@ function judge(ok,btn,correctText){
  else{streak=0;wrong.push(w);fb.className='fb no';fb.innerHTML='✘ 答案：<b>'+esc(w.w)+'</b>　'+esc(w.zh);
   const k=w.w.toLowerCase();mist[k]={w:w.w,pos:w.pos,zh:w.zh,n:((mist[k]||{}).n||0)+1};store.set('gept_mist',mist);
   if(mode==='dict'||mode==='spell')speak(w.w)}
+ if(sel==='drill'){
+  const k=dkey(w);tries[k]=(tries[k]||0)+1;
+  if(ok){prog[k]=(prog[k]||0)+1;
+   if(prog[k]>=2){mastered++;delete mist[k];store.set('gept_mist',mist);fb.innerHTML+='<br>🎓 這個字連過 2 關，已從錯題本畢業！';}
+   else{Q.splice(Math.min(qi+4,Q.length),0,{w:w.w,pos:w.pos,zh:w.zh});fb.innerHTML+='<br>🔥 再來第 2 關（改成例句填空），稍後會再出現。'}}
+  else{prog[k]=0;if(tries[k]<6)Q.splice(Math.min(qi+3,Q.length),0,{w:w.w,pos:w.pos,zh:w.zh});fb.innerHTML+='<br>🔁 這個字稍後會重練。'}
+  $('#qn').textContent=Q.length;
+ }
+ if(mode==='sent'&&curSent){fb.innerHTML+='<br><span style="font-weight:400">例句：'+esc(curSent.en)+(curSent.zh?'<br>'+esc(curSent.zh):'')+'</span>';speak(curSent.en)}
  $('#streak').textContent=streak;$('#gain').textContent=gain;
  camLink(w);$('#cam').classList.remove('hidden');
  const cx=collX(w.w),cb=$('#collBox');
@@ -481,6 +511,7 @@ function finish(){
  $('#bar').style.width='100%';
  const pct=Math.round(right/Q.length*100);
  $('#resTxt').innerHTML='答對 <b>'+right+' / '+Q.length+'</b>（'+pct+'%），本回獲得 <b>'+gain+'</b> 顆精靈球 <span class="ball"></span><br>目前精靈球：<b>'+balls+'</b>　超級球：<b>'+great+'</b>（滿 100 顆精靈球可兌換超級球）<br>'+(pct>=90?'🏆 訓練家大師！':pct>=70?'👍 不錯喔！':'再挑戰一次會更好！');
+ if(sel==='drill')$('#resTxt').innerHTML+='<br>🎓 本回從錯題本畢業：<b>'+mastered+'</b> 個字；錯題本剩 <b>'+Object.keys(mist).length+'</b> 個。';
  $('#resWrong').innerHTML=wrong.length?'<h2>這回的錯題</h2><table>'+wrong.map(w=>'<tr><td>'+esc(w.w)+'</td><td>'+esc(w.pos)+'</td><td>'+esc(w.zh)+'</td></tr>').join('')+'</table>':'<p>全對，沒有錯題！</p>';
  show('result');
 }
